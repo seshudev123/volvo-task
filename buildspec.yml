@@ -6,17 +6,17 @@ phases:
   pre_build: 
     commands: 
       - echo logging in to AWS ECR...   
-      - $(aws ecr get-login --no-include-email --region us-east-2)   
+      - aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 581984844962.dkr.ecr.us-east-2.amazonaws.com  
   build:   
     commands:   
       - echo build Docker image on `date`   
-      - docker build -t test:latest .   
-      - docker tag test:latest 581984844962.dkr.ecr.us-east-2.amazonaws.com/versionapi:volvo-v1   
+      - docker build -t versionapi .   
+      - docker tag versionapi:latest 581984844962.dkr.ecr.us-east-2.amazonaws.com/versionapi:latest   
   post_build:   
     commands:   
       - echo build Docker image complete `date`   
       - echo push latest Docker images to ECR...   
-      - docker push 581984844962.dkr.ecr.us-east-2.amazonaws.com/versionapi:volvo-v1
+      - docker push 581984844962.dkr.ecr.us-east-2.amazonaws.com/versionapi:latest
       - printf '{"ImageURI":"image_URI"}' > imageDetail.json
       - pwd 
       - ls 
