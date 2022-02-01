@@ -1,0 +1,525 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  This template creates a Multi-AZ, multi-subnet VPC infrastructure with managed
+  NAT gateways in the public subnet for each Availability Zone. RDS in a private subnet.
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+      - Label:
+          default: Availability Zone Configuration
+        Parameters:
+          - AvailabilityZones
+          - NumberOfAZs
+      - Label:
+          default: Network Configuration
+        Parameters:
+          - VPCCIDR
+          - PublicSubnet1CIDR
+          - PublicSubnet2CIDR
+          - PublicSubnetTag1
+          - PublicSubnetTag2
+          - PublicSubnetTag3
+          - CreatePrivateSubnets
+          - PrivateSubnet1ACIDR
+          - PrivateSubnet2ACIDR
+          - PrivateSubnetATag1
+          - PrivateSubnetATag2
+          - PrivateSubnetATag3
+          - VPCTenancy
+    ParameterLabels:
+      AvailabilityZones:
+        default: Availability Zones
+      CreateAdditionalPrivateSubnets:
+        default: Create additional private subnets with dedicated network ACLs
+      CreatePrivateSubnets:
+        default: Create private subnets
+      KeyPairName:
+        default: 'Deprecated: Key pair name'
+      NATInstanceType:
+        default: 'Deprecated: NAT instance type'
+      NumberOfAZs:
+        default: Number of Availability Zones
+      PrivateSubnet1ACIDR:
+        default: Private subnet 1A CIDR
+      PrivateSubnet2ACIDR:
+        default: Private subnet 2A CIDR
+      PrivateSubnetATag1:
+        default: Tag for Private A Subnets
+      PrivateSubnetATag2:
+        default: Tag for Private A Subnets
+      PrivateSubnetATag3:
+        default: Tag for Private A Subnets
+      PublicSubnet1CIDR:
+        default: Public subnet 1 CIDR
+      PublicSubnet2CIDR:
+        default: Public subnet 2 CIDR
+      PublicSubnetTag1:
+        default: Tag for Public Subnets
+      PublicSubnetTag2:
+        default: Tag for Public Subnets
+      PublicSubnetTag3:
+        default: Tag for Public Subnets
+      VPCCIDR:
+        default: VPC CIDR
+      VPCTenancy:
+        default: VPC Tenancy
+Parameters:
+  AvailabilityZones:
+    Description: >-
+      List of AWS::EC2::Instances to use for the subnets in the VPC. Note: The
+      logical order is preserved.
+    Type: 'List<AWS::EC2::AvailabilityZone::Name>'
+  NumberOfAZs:
+    AllowedValues:
+      - '2'
+    Default: '2'
+    Description: >-
+      Number of Availability Zones to use in the VPC. This must match your
+      selections in the list of Availability Zones parameter.
+    Type: String
+  PrivateSubnet1ACIDR:
+    AllowedPattern: >-
+      ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.0.3.0/24
+    Description: CIDR block for private subnet 1A located in Availability Zone 1
+    Type: String
+  PrivateSubnet2ACIDR:
+    AllowedPattern: >-
+      ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.0.4.0/24
+    Description: CIDR block for private subnet 2A located in Availability Zone 2
+    Type: String
+  PrivateSubnetATag1:
+    AllowedPattern: '^([a-zA-Z0-9+\-._:/@]+=[a-zA-Z0-9+\-.,_:/@ *\\"''\[\]\{\}]*)?$'
+    ConstraintDescription: >-
+      tags must be in format "Key=Value" keys can only contain
+      [a-zA-Z0-9+\-._:/@], values can contain [a-zA-Z0-9+\-._:/@ *\\"'\[\]\{\}]
+    Default: Network=Private
+    Description: 'tag to add to private subnets A, in format Key=Value (Optional)'
+    Type: String
+  PrivateSubnetATag2:
+    AllowedPattern: '^([a-zA-Z0-9+\-._:/@]+=[a-zA-Z0-9+\-.,_:/@ *\\"''\[\]\{\}]*)?$'
+    ConstraintDescription: >-
+      tags must be in format "Key=Value" keys can only contain
+      [a-zA-Z0-9+\-._:/@], values can contain [a-zA-Z0-9+\-._:/@ *\\"'\[\]\{\}]
+    Default: ''
+    Description: 'tag to add to private subnets A, in format Key=Value (Optional)'
+    Type: String
+  PrivateSubnetATag3:
+    AllowedPattern: '^([a-zA-Z0-9+\-._:/@]+=[a-zA-Z0-9+\-.,_:/@ *\\"''\[\]\{\}]*)?$'
+    ConstraintDescription: >-
+      tags must be in format "Key=Value" keys can only contain
+      [a-zA-Z0-9+\-._:/@], values can contain [a-zA-Z0-9+\-._:/@ *\\"'\[\]\{\}]
+    Default: ''
+    Description: 'tag to add to private subnets A, in format Key=Value (Optional)'
+    Type: String
+  PublicSubnet1CIDR:
+    AllowedPattern: >-
+      ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.0.1.0/24
+    Description: CIDR block for the public DMZ subnet 1 located in Availability Zone 1
+    Type: String
+  PublicSubnet2CIDR:
+    AllowedPattern: >-
+      ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.0.2.0/24
+    Description: CIDR block for the public DMZ subnet 2 located in Availability Zone 2
+    Type: String
+  PublicSubnetTag1:
+    AllowedPattern: '^([a-zA-Z0-9+\-._:/@]+=[a-zA-Z0-9+\-.,_:/@ *\\"''\[\]\{\}]*)?$'
+    ConstraintDescription: >-
+      tags must be in format "Key=Value" keys can only contain
+      [a-zA-Z0-9+\-._:/@], values can contain [a-zA-Z0-9+\-._:/@ *\\"'\[\]\{\}]
+    Default: Network=Public
+    Description: 'tag to add to public subnets, in format Key=Value (Optional)'
+    Type: String
+  PublicSubnetTag2:
+    AllowedPattern: '^([a-zA-Z0-9+\-._:/@]+=[a-zA-Z0-9+\-.,_:/@ *\\"''\[\]\{\}]*)?$'
+    ConstraintDescription: >-
+      tags must be in format "Key=Value" keys can only contain
+      [a-zA-Z0-9+\-._:/@], values can contain [a-zA-Z0-9+\-._:/@ *\\"'\[\]\{\}]
+    Default: ''
+    Description: 'tag to add to public subnets, in format Key=Value (Optional)'
+    Type: String
+  PublicSubnetTag3:
+    AllowedPattern: '^([a-zA-Z0-9+\-._:/@]+=[a-zA-Z0-9+\-.,_:/@ *\\"''\[\]\{\}]*)?$'
+    ConstraintDescription: >-
+      tags must be in format "Key=Value" keys can only contain
+      [a-zA-Z0-9+\-._:/@], values can contain [a-zA-Z0-9+\-._:/@ *\\"'\[\]\{\}]
+    Default: ''
+    Description: 'tag to add to public subnets, in format Key=Value (Optional)'
+    Type: String
+  VPCCIDR:
+    AllowedPattern: >-
+      ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.0.0.0/16
+    Description: CIDR block for the VPC
+    Type: String
+  VPCTenancy:
+    AllowedValues:
+      - default
+      - dedicated
+    Default: default
+    Description: The allowed tenancy of instances launched into the VPC
+    Type: String
+
+Resources:
+  VPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: !Ref VPCCIDR
+      InstanceTenancy: !Ref VPCTenancy
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Ref 'AWS::StackName'
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Ref 'AWS::StackName'
+  VPCGatewayAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+  PrivateSubnet1A:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnet1ACIDR
+      AvailabilityZone: !Select
+        - '0'
+        - !Ref AvailabilityZones
+      Tags:
+        - Key: Name
+          Value: Private subnet 1
+  PrivateSubnet2A:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnet2ACIDR
+      AvailabilityZone: !Select
+        - '1'
+        - !Ref AvailabilityZones
+      Tags:
+        - Key: Name
+          Value: Private subnet 2
+  PublicSubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnet1CIDR
+      AvailabilityZone: !Select
+        - '0'
+        - !Ref AvailabilityZones
+      Tags:
+        - Key: Name
+          Value: Public subnet 1
+      MapPublicIpOnLaunch: true
+  PublicSubnet2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnet2CIDR
+      AvailabilityZone: !Select
+        - '1'
+        - !Ref AvailabilityZones
+      Tags:
+        - Key: Name
+          Value: Public subnet 2
+      MapPublicIpOnLaunch: true
+  PrivateSubnet1ARouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: Private subnet 1
+        - Key: Network
+          Value: Private
+  PrivateSubnet1ARoute:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref PrivateSubnet1ARouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway1
+  PrivateSubnet1ARouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PrivateSubnet1A
+      RouteTableId: !Ref PrivateSubnet1ARouteTable
+  PrivateSubnet2ARouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: Private subnet 2
+        - Key: Network
+          Value: Private
+  PrivateSubnet2ARoute:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref PrivateSubnet2ARouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway2
+  PrivateSubnet2ARouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PrivateSubnet2A
+      RouteTableId: !Ref PrivateSubnet2ARouteTable
+  PublicSubnetRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: Public Subnets
+        - Key: Network
+          Value: Public
+  PublicSubnetRoute:
+    DependsOn: VPCGatewayAttachment
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref PublicSubnetRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PublicSubnet1RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicSubnetRouteTable
+  PublicSubnet2RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicSubnetRouteTable
+  NAT1EIP:
+    DependsOn: VPCGatewayAttachment
+    Type: 'AWS::EC2::EIP'
+    Properties:
+      Domain: vpc
+  NAT2EIP:
+    DependsOn: VPCGatewayAttachment
+    Type: 'AWS::EC2::EIP'
+    Properties:
+      Domain: vpc
+  NATGateway1:
+    DependsOn: VPCGatewayAttachment
+    Type: 'AWS::EC2::NatGateway'
+    Properties:
+      AllocationId: !GetAtt
+        - NAT1EIP
+        - AllocationId
+      SubnetId: !Ref PublicSubnet1
+  NATGateway2:
+    DependsOn: VPCGatewayAttachment
+    Type: 'AWS::EC2::NatGateway'
+    Properties:
+      AllocationId: !GetAtt
+        - NAT2EIP
+        - AllocationId
+      SubnetId: !Ref PublicSubnet2
+  BastionSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for Bastion Host to allow SSH
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: SocialHi5-Bastion-SG-CFT
+      VpcId: !Ref VPC
+
+  ALBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for Application Load Balancer to expose HTTP 80 & HTTPS 443
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: SocialHi5-ALB-SG-CFT
+      VpcId: !Ref VPC
+  BastionHost:
+    Type: AWS::EC2::Instance
+    Properties:
+      AvailabilityZone: us-west-2a
+      BlockDeviceMappings:
+        - DeviceName: "/dev/xvda"
+          Ebs:
+            VolumeType: "gp2"
+            DeleteOnTermination: "true"
+            VolumeSize: "8"
+      ImageId: ami-0f2176987ee50226e
+      InstanceType: t2.micro
+      KeyName: social-bastion-key
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: "true"
+          DeviceIndex: "0"
+          SubnetId: !Ref PublicSubnet1
+          GroupSet:
+            - !Ref BastionSG
+      Tags:
+        - Key: Name
+          Value: SocialHi5-Bastion-Host-CFT
+
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: SocialHi5-Internet-ALB-CFT
+      IpAddressType: ipv4
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+        - Key: access_logs.s3.enabled
+          Value: true
+        - Key: access_logs.s3.bucket
+          Value: socailhificompliant3
+      SecurityGroups:
+        - !Ref ALBSG
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PrivateSubnet2A
+      Type: application
+
+  ALBListener:
+    DependsOn: ALB
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      Certificates:
+        - CertificateArn: arn:aws:acm:us-west-2:773358635836:certificate/fe06f263-20c4-4f0c-b34a-c6141392f52e
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTG
+      LoadBalancerArn: !Ref ALB
+      Port: 443
+      Protocol: HTTPS
+
+  ALBListener1:
+    DependsOn: ALB
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig:
+            Host: "#{host}"
+            Path: "/#{path}"
+            Port: 443
+            Protocol: "HTTPS"
+            Query: "#{query}"
+            StatusCode: HTTP_301
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+
+  ALBTG:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckProtocol: HTTPS
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 5
+      Matcher:
+        HttpCode: '200'
+      Name: SocialHi5-Web-CFT
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: SocialHi5-ALB-TG-CFT
+Outputs:
+  NAT1EIP:
+    Description: NAT 1 IP address
+    Value: !Ref NAT1EIP
+    Export:
+      Name: !Sub 'NAT1EIP'
+  NAT2EIP:
+    Description: NAT 2 IP address
+    Value: !Ref NAT2EIP
+    Export:
+      Name: !Sub 'NAT2EIP'
+  PrivateSubnet1ACIDR:
+    Description: Private subnet 1A CIDR in Availability Zone 1
+    Value: !Ref PrivateSubnet1ACIDR
+    Export:
+      Name: !Sub 'PrivateSubnet1ACIDR'
+  PrivateSubnet1AID:
+    Description: Private subnet 1A ID in Availability Zone 1
+    Value: !Ref PrivateSubnet1A
+    Export:
+      Name: !Sub 'PrivateSubnet1AID'
+  PrivateSubnet2ACIDR:
+    Description: Private subnet 2A CIDR in Availability Zone 2
+    Value: !Ref PrivateSubnet2ACIDR
+    Export:
+      Name: !Sub 'PrivateSubnet2ACIDR'
+  PrivateSubnet2AID:
+    Description: Private subnet 2A ID in Availability Zone 2
+    Value: !Ref PrivateSubnet2A
+    Export:
+      Name: !Sub 'PrivateSubnet2AID'
+  PublicSubnet1CIDR:
+    Description: Public subnet 1 CIDR in Availability Zone 1
+    Value: !Ref PublicSubnet1CIDR
+    Export:
+      Name: !Sub 'PublicSubnet1CIDR'
+  PublicSubnet1ID:
+    Description: Public subnet 1 ID in Availability Zone 1
+    Value: !Ref PublicSubnet1
+    Export:
+      Name: !Sub 'PublicSubnet1ID'
+  PublicSubnet2CIDR:
+    Description: Public subnet 2 CIDR in Availability Zone 2
+    Value: !Ref PublicSubnet2CIDR
+    Export:
+      Name: !Sub 'PublicSubnet2CIDR'
+  PublicSubnet2ID:
+    Description: Public subnet 2 ID in Availability Zone 2
+    Value: !Ref PublicSubnet2
+    Export:
+      Name: !Sub 'PublicSubnet2ID'
+  PrivateSubnet1ARouteTable:
+    Value: !Ref PrivateSubnet1ARouteTable
+    Description: Private subnet 1A route table
+    Export:
+      Name: !Sub 'PrivateSubnet1ARouteTable'
+  PrivateSubnet2ARouteTable:
+    Value: !Ref PrivateSubnet2ARouteTable
+    Description: Private subnet 2A route table
+    Export:
+      Name: !Sub 'PrivateSubnet2ARouteTable'
+  PublicSubnetRouteTable:
+    Value: !Ref PublicSubnetRouteTable
+    Description: Public subnet route table
+    Export:
+      Name: !Sub 'PublicSubnetRouteTable'
+  VPCCIDR:
+    Value: !Ref VPCCIDR
+    Description: VPC CIDR
+    Export:
+      Name: !Sub 'VPCCIDR'
+  VPCID:
+    Value: !Ref VPC
+    Description: VPC ID
+    Export:
+      Name: !Sub 'VPCID'
+  ALBTGARN:
+    Value: !Ref ALBTG
+    Description: ARN of the ALB Target Group
+    Export:
+      Name: !Sub 'ALBTG'

@@ -1,0 +1,49 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  SocialHi5 Master template. It calls 3 other templates that deploys a VPC, a web-tier, an app-tier and a DB.
+
+Parameters:
+  AvailabilityZones:
+    Type: 'List<AWS::EC2::AvailabilityZone::Name>'
+    Description: Choose Availability Zones.
+Resources:
+  VPCStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://socialhi5-cft.s3-us-west-2.amazonaws.com/AWSVPC.template
+      Parameters:
+        AvailabilityZones: !Join
+          - ','
+          - !Ref AvailabilityZones
+
+  WebStack:
+    DependsOn: VPCStack
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://socialhi5-cft.s3-us-west-2.amazonaws.com/webtier.template
+
+  AppStack:
+    DependsOn: VPCStack
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://socialhi5-cft.s3-us-west-2.amazonaws.com/apptier.template
+
+Outputs:
+  Stackref:
+    Value: !Ref VPCStack
+  Output1fromNestedVPCStack:
+    Value: !GetAtt VPCStack.Outputs.NAT1EIP
+  Output2fromNestedVPCStack:
+    Value: !GetAtt VPCStack.Outputs.NAT2EIP
+  Output3fromNestedVPCStack:
+    Value: !GetAtt VPCStack.Outputs.PrivateSubnet1ACIDR
+  Output4fromNestedVPCStack:
+    Value: !GetAtt VPCStack.Outputs.PrivateSubnet2ACIDR
+  Output5fromNestedVPCStack:
+    Value: !GetAtt VPCStack.Outputs.PublicSubnet1CIDR
+  Output6fromNestedVPCStack:
+    Value: !GetAtt VPCStack.Outputs.PublicSubnet2CIDR
+  Output7fromNestedVPCStack:
+    Value: !GetAtt VPCStack.Outputs.VPCID
+  Output8fromNestedVPCStack:
+    Value: !GetAtt VPCStack.Outputs.ALBTGARN

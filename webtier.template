@@ -1,0 +1,297 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  SocialHi5 - Web tier
+
+Resources:
+  WebTierInstancerole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforAWSCodeDeploy
+        - arn:aws:iam::aws:policy/service-role/AWSOpsWorksCMServiceRole
+        - arn:aws:iam::aws:policy/AWSOpsWorksCMInstanceProfileRole
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+                - "ssm.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      RoleName: WebTierInstancerole
+  WebTierInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref WebTierInstancerole
+  WebSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for Web Tier
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: SocialHi5-WebTier-SG
+      VpcId:
+        Fn::ImportValue:
+          !Sub 'VPCID'
+  WebTierLaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      AssociatePublicIpAddress: false
+      BlockDeviceMappings:
+        - DeviceName: "/dev/xvda"
+          Ebs:
+            VolumeType: "gp2"
+            DeleteOnTermination: "true"
+            VolumeSize: "50"
+      EbsOptimized: false
+      IamInstanceProfile: !Ref WebTierInstanceProfile
+      ImageId: ami-0515f84415c92cc6f
+      InstanceMonitoring: false
+      InstanceType: t2.medium
+      KeyName: social-web-key
+      LaunchConfigurationName: SocialHi5-Web-Tier-CFT
+      UserData:
+        Fn::Base64:
+          #!/bin/bash
+          apt-get update
+          apt-get -y install python-pip
+          apt-get -y install awscli
+          aws s3 cp s3://socialhi5-cft/webtier-user-data.sh /tmp --region us-west-2
+          chmod +x webtier-user-data.sh
+          ./tmp/webtier-use-data.sh
+          shred -u -z -n 27 /tmp/webtier-user-data.sh
+      SecurityGroups:
+        - !Ref WebSG
+  WebTierAutoscalingGroup:
+    DependsOn: WebTierLaunchConfiguration
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: SocialHi5-Web-Tier-CFT
+      VPCZoneIdentifier:
+        - Fn::ImportValue:
+            !Sub 'PrivateSubnet1AID'
+        - Fn::ImportValue:
+            !Sub 'PrivateSubnet2AID'
+      Cooldown: 300
+      DesiredCapacity: 1
+      HealthCheckGracePeriod: 300
+      HealthCheckType: EC2
+      LaunchConfigurationName: !Ref WebTierLaunchConfiguration
+      MaxSize: 2
+      MinSize: 1
+      Tags:
+        - Key: Name
+          PropagateAtLaunch: true
+          Value: Web-Tier-Prod-Application-CFT
+      TargetGroupARNs:
+        - Fn::ImportValue:
+            !Sub 'ALBTG'
+      TerminationPolicies:
+        - Default
+  WebTierRepository:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryDescription: Repository for SocialHi5 Web-Tier Application
+      RepositoryName: SocialHi5-Web-tier-CFT
+  WebTierBuild:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        ArtifactIdentifier: String
+        EncryptionDisabled: false
+        Location: socialhi5-backup
+        Packaging: ZIP
+        Type: S3
+      Description: SocialHi5 FrontEnd Build-CFT
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:2.0
+        Type: LINUX_CONTAINER
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: SocialHi5-Web-Tier-Build-CFT
+          StreamName: Web-Tier-Build-Stream-CFT
+        S3Logs:
+          Status: ENABLED
+          Location: socialhi5-logs/prod-logs/build-log
+      Name: SocialHi5-WebTier-Build-CFT
+      ServiceRole: arn:aws:iam::773358635836:role/service-role/codebuildwebtierservicerole
+      Source:
+        Type: CODECOMMIT
+        Location: https://git-codecommit.us-west-2.amazonaws.com/v1/repos/SocialHi5-Web-tier-CFT
+      TimeoutInMinutes: 60
+  WebTierDeploymentApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: SocialHi5-Web-deployment-CFT
+      ComputePlatform: Server
+  WebTierDeploymentGroup:
+    DependsOn: WebTierDeploymentApplication
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref WebTierDeploymentApplication
+      AutoScalingGroups:
+        - !Ref WebTierAutoscalingGroup
+      DeploymentStyle:
+        DeploymentType: IN_PLACE
+        DeploymentOption: WITHOUT_TRAFFIC_CONTROL
+      DeploymentGroupName: SocialHi5-WebTier-Deployment-CFT
+      DeploymentConfigName: CodeDeployDefault.AllAtOnce
+      ServiceRoleArn: arn:aws:iam::773358635836:role/Code-deploy-role
+  WebTierPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      ArtifactStore:
+        Location: socialhi5-pipeline-artifacts
+        Type: S3
+      Name: SocialHi5-WebTier-Pipeline-CFT
+      RoleArn: arn:aws:iam::773358635836:role/service-role/AWSCodePipelineServiceRole-us-west-2-socialhi5-deploy-webb
+      Stages:
+        - Name: Source
+          Actions:
+          - Name: Source
+            ActionTypeId:
+              Category: Source
+              Owner: AWS
+              Version: 1
+              Provider: CodeCommit
+            OutputArtifacts:
+            - Name: SourceArtifact
+            Configuration:
+              RepositoryName: !GetAtt WebTierRepository.Name
+              BranchName: master
+        - Name: Build
+          Actions:
+          - Name: Build
+            ActionTypeId:
+              Category: Build
+              Owner: AWS
+              Version: 1
+              Provider: CodeBuild
+            Region: us-west-2
+            InputArtifacts:
+            - Name: SourceArtifact
+            OutputArtifacts:
+            - Name: BuildArtifact
+            Configuration:
+              ProjectName: !Ref WebTierBuild
+        - Name: Deploy
+          Actions:
+          - Name: Deploy
+            ActionTypeId:
+              Category: Deploy
+              Owner: AWS
+              Version: 1
+              Provider: CodeDeploy
+            Region: us-west-2
+            InputArtifacts:
+            - Name: BuildArtifact
+            Configuration:
+              ApplicationName: !Ref WebTierDeploymentApplication
+              DeploymentGroupName: !Ref WebTierDeploymentGroup
+  RDSDBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for DB Tier
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: SocialHi5-DBTier-SG-CFT
+      VpcId:
+        Fn::ImportValue:
+          !Sub 'VPCID'
+  WebTierDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: CloudFormation managed DB subnet group-CFT
+      DBSubnetGroupName: SocialHi5DBSubNetGroup
+      SubnetIds:
+        - Fn::ImportValue:
+            !Sub 'PrivateSubnet1AID'
+        - Fn::ImportValue:
+            !Sub 'PrivateSubnet2AID'
+  WebTierScaleEventRule:
+    DependsOn:
+      - WebTierAutoscalingGroup
+      - CloudWatchEventsRole
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Description: 'Rule to trigger pipeline when code is deployed'
+      EventPattern:
+        source:
+          - "aws.autoscaling"
+        detail-type:
+          - "EC2 Instance-launch Lifecycle Action"
+        detail:
+          AutoScalingGroupName:
+            - !Ref WebTierAutoscalingGroup
+      Name: 'SocialHi5-pipeline-trigger'
+      State: 'ENABLED'
+      RoleArn: !GetAtt CloudWatchEventsRole.Arn
+      Targets:
+        -
+          Arn: arn:aws:codepipeline:us-west-2:773358635836:SocialHi5-WebTier-Pipeline-CFT
+          Id: !Ref WebTierPipeline
+          RoleArn: !GetAtt CloudWatchEventsRole.Arn
+  CloudWatchEventsRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: SocialHi5-Events-Role
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: cloudwatch-trigger-pipeline
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'codepipeline:StartPipelineExecution'
+                Resource: '*'
+  WebTierDBInstance:
+    DependsOn: WebTierDBSubnetGroup
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: 50
+      AllowMajorVersionUpgrade: false
+      AutoMinorVersionUpgrade: false
+      DBSubnetGroupName: !Ref WebTierDBSubnetGroup
+      AvailabilityZone: us-west-2a
+      BackupRetentionPeriod: 7
+      CopyTagsToSnapshot: true
+      DBInstanceClass: db.t2.medium
+      DBInstanceIdentifier: SocialHi5-DB-CFT
+      EnableIAMDatabaseAuthentication: false
+      EnablePerformanceInsights: false
+      Engine: MySQL
+      EngineVersion: 5.7.22
+      MasterUsername: socialhi5user
+      MasterUserPassword: socialhi5$pass897
+      MonitoringInterval: 60
+      MonitoringRoleArn: arn:aws:iam::773358635836:role/rds-monitoring-role
+      MultiAZ: false
+      PubliclyAccessible: false
+      VPCSecurityGroups:
+        - !Ref RDSDBSG

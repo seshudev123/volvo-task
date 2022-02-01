@@ -1,0 +1,526 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: |-
+  SocialHi5 - App tier
+Resources:
+  ECSCluster:
+    Type: 'AWS::ECS::Cluster'
+    Properties:
+      ClusterName: Socialhi5-cluster-CFT
+      Tags:
+        - Key: Owner
+          Value: Socialhi5 Cluster CFT
+  ContainerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Access to the ECS hosts that run containers
+      GroupName: socialhi5-security-group
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          FromPort: '32767'
+          IpProtocol: tcp
+          ToPort: '65535'
+        - CidrIp: 0.0.0.0/0
+          FromPort: '8080'
+          IpProtocol: tcp
+          ToPort: '8080'
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Owner
+          Value: Socialhi5 Security Group
+      VpcId:
+        Fn::ImportValue:
+          !Sub 'VPCID'
+  ECSAutoScalingGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      AutoScalingGroupName: SocialHi5-App-Tier-CFT
+      VPCZoneIdentifier:
+        - Fn::ImportValue:
+            !Sub 'PrivateSubnet1AID'
+        - Fn::ImportValue:
+            !Sub 'PrivateSubnet2AID'
+      LaunchConfigurationName: !Ref ContainerInstances
+      MinSize: 1
+      MaxSize: 2
+      #ServiceLinkedRoleARN: arn:aws:iam::773358635836:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling
+      DesiredCapacity: 1
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 0
+      Cooldown: 300
+      TargetGroupARNs:
+        - !Ref ALBTGApp
+        - !Ref ALBTGApp1
+      TerminationPolicies:
+        - Default
+  ContainerInstances:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    Properties:
+      ImageId: ami-0e5e051fd0b505db6
+      SecurityGroups:
+        - !Ref ContainerSecurityGroup
+      InstanceType: t2.medium
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      KeyName: socialhi5-key
+      LaunchConfigurationName: social-hi5-app-launchconfiguration-CFT
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
+          yum install -y aws-cfn-bootstrap
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource ECSAutoScalingGroup --region ${AWS::Region}
+  EC2InstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Path: /
+      Roles:
+        - !Ref EC2Role
+  AutoscalingRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - application-autoscaling.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: service-autoscaling
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'application-autoscaling:*'
+                  - 'cloudwatch:DescribeAlarms'
+                  - 'cloudwatch:PutMetricAlarm'
+                  - 'ecs:DescribeServices'
+                  - 'ecs:UpdateService'
+                Resource: '*'
+  EC2Role:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - >-
+          arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+      RoleName: EcsRoleForInstance
+      Policies:
+        - PolicyName: QuickSightPolicyforEcs
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'sts:AssumeRole'
+                  - 'quicksight:*'
+                Resource: '*'
+  ECSRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: ecs-service
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ec2:AttachNetworkInterface'
+                  - 'ec2:CreateNetworkInterface'
+                  - 'ec2:CreateNetworkInterfacePermission'
+                  - 'ec2:DeleteNetworkInterface'
+                  - 'ec2:DeleteNetworkInterfacePermission'
+                  - 'ec2:Describe*'
+                  - 'ec2:DetachNetworkInterface'
+                  - 'elasticloadbalancing:DeregisterInstancesFromLoadBalancer'
+                  - 'elasticloadbalancing:DeregisterTargets'
+                  - 'elasticloadbalancing:Describe*'
+                  - 'elasticloadbalancing:RegisterInstancesWithLoadBalancer'
+                  - 'elasticloadbalancing:RegisterTargets'
+                Resource: '*'
+  Role:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2008-10-17
+        Statement:
+          - Sid: ''
+            Effect: Allow
+            Principal:
+              Service: ecs.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceRole'
+  ALB:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      Name: SocialHi5-app-ALB-CFT
+      IpAddressType: ipv4
+      Scheme: internal
+      SecurityGroups:
+        - !Ref ContainerSecurityGroup
+      Subnets:
+        - Fn::ImportValue:
+            !Sub 'PrivateSubnet1AID'
+        - Fn::ImportValue:
+            !Sub 'PrivateSubnet2AID'
+      Type: application
+  ALBListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTGApp
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+  ALBListener1:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTGApp1
+      LoadBalancerArn: !Ref ALB
+      Port: 8080
+      Protocol: HTTP
+  ALBTGApp:
+    DependsOn: ALB
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 5
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: '200'
+      Name: SocialHi5-app-blue-target-CFT
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      VpcId:
+        Fn::ImportValue:
+          !Sub 'VPCID'
+      Tags:
+        - Key: Name
+          Value: SocialHi5-ALB-Blue-TG-CFT
+  ALBTGApp1:
+    DependsOn: ALB
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 5
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: '200'
+      Name: SocialHi5-app-green-target-CFT
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      VpcId:
+        Fn::ImportValue:
+          !Sub 'VPCID'
+      Tags:
+        - Key: Name
+          Value: SocialHi5-ALB-Green-TG-CFT
+  TaskRoleECS:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - >-
+          arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      RoleName: TaskExecutionRoleForECS
+      Policies:
+        - PolicyName: QuickSightPolicyforEcsTasks
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'sts:AssumeRole'
+                  - 'quicksight:*'
+                Resource: '*'
+  taskdefinition:
+    Type: 'AWS::ECS::TaskDefinition'
+    Properties:
+      RequiresCompatibilities:
+        - EC2
+      ContainerDefinitions:
+        - Name: Socialhi5Container-CFT
+          Image: '773358635836.dkr.ecr.us-west-2.amazonaws.com/socialhi5-repo-cft:flasklatest-cft'
+          Cpu: '256'
+          Memory: '512'
+          Essential: 'true'
+          PortMappings:
+            - ContainerPort: 5000
+              HostPort: 0
+              Protocol: tcp
+          LogConfiguration:
+           LogDriver: awslogs
+           Options:
+             awslogs-group: /ecs/apptier
+             awslogs-region: us-west-2
+             awslogs-stream-prefix: ecs
+      ExecutionRoleArn: !Ref TaskRoleECS
+      TaskRoleArn: !Ref TaskRoleECS
+      NetworkMode: bridge
+      Family: social-hi5-taskdefinition-CFT
+      Tags:
+        - Key: Owner
+          Value: Socialhi5-taskdefinition-CFT
+  ECSServiceSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Access to the ECS hosts that run containers
+      GroupName: socialhi5-service-security-group
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          FromPort: '80'
+          IpProtocol: tcp
+          ToPort: '80'
+        - CidrIp: 0.0.0.0/0
+          FromPort: '8080'
+          IpProtocol: tcp
+          ToPort: '8080'
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Owner
+          Value: Socialhi5 ecs security group
+      VpcId:
+        Fn::ImportValue:
+          !Sub 'VPCID'
+  AppTierCustomECSLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: socialhi5-cft
+        S3Key: ecs.zip
+      FunctionName: EcsService-with-CodeDeploy
+      Description: >-
+        Custom resource provider provisioning ECS Service with CodeDeploy
+        deployment controller
+      Runtime: python3.7
+      Handler: lambda.lambda_handler
+      MemorySize: 128
+      Role: !GetAtt SocialHi5LambdaExecutionRole.Arn
+      Timeout: 900
+      TracingConfig:
+        Mode: PassThrough
+  AppTierECSService:
+    DependsOn: AppTierCustomECSLambda
+    Type: Custom::ECSService
+    Properties:
+      ServiceToken: !GetAtt AppTierCustomECSLambda.Arn
+      Cluster: !Ref ECSCluster
+      ServiceName: SocialHi5-CFT-deployment-manager-CFT
+      LaunchType: EC2
+      TaskDefinition: !Ref taskdefinition
+      LoadBalancers:
+        - containerName: Socialhi5Container-CFT
+          containerPort: 5000
+          targetGroupArn: !Ref ALBTGApp
+      DesiredCount: 2
+  AppTierRepository:
+    Type: 'AWS::CodeCommit::Repository'
+    Properties:
+      RepositoryDescription: Repository for SocialHi5 App-Tier Application
+      RepositoryName: SocialHi5-App-tier-CFT
+  AppTierBuild:
+    Type: 'AWS::CodeBuild::Project'
+    Properties:
+      Artifacts:
+        ArtifactIdentifier: String
+        EncryptionDisabled: false
+        Location: socialhi5-build-apptier-artifact
+        Packaging: ZIP
+        Type: S3
+      Description: >-
+        building the socialhi5 application as docker image and pushing to ECR
+        repo
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        PrivilegedMode: true
+        Image: 'aws/codebuild/standard:1.0'
+        Type: LINUX_CONTAINER
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: SocialHi5-App-Tier-Build-CFT
+          StreamName: App-Tier-Build-Stream-CFT
+        S3Logs:
+          Status: ENABLED
+          Location: socialhi5-logs/prod-logs/app-logs/build-logs
+      Name: SocialHi5-AppTier-Build-CFT
+      ServiceRole: arn:aws:iam::773358635836:role/codebuildapptierservicerole
+      Source:
+        Type: CODECOMMIT
+        Location: >-
+          https://git-codecommit.us-west-2.amazonaws.com/v1/repos/SocialHi5-App-tier-CFT
+      TimeoutInMinutes: 60
+  AppTierDeploymentApplication:
+    Type: 'AWS::CodeDeploy::Application'
+    Properties:
+      ApplicationName: SocialHi5-App-deployment-CFT
+      ComputePlatform: ECS
+  SocialHi5LambdaExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Path: "/"
+      Policies:
+        - PolicyName: ECSCodeDeployLambdaExecPolicy
+          PolicyDocument: '{"Version":"2012-10-17","Statement":[{"Sid":"EcsAllow","Effect":"Allow","Action":["ecs:UpdateService","codedeploy:GetDeploymentGroup","ecs:CreateService","ecs:DeleteService","ecs:DescribeServices","codedeploy:UpdateDeploymentGroup","codedeploy:CreateDeploymentGroup","codedeploy:DeleteDeploymentGroup"],"Resource":"*"},{"Sid":"CodeDeployAllow","Effect":"Allow","Action":["codedeploy:GetDeploymentGroup","codedeploy:UpdateDeploymentGroup","codedeploy:CreateDeploymentGroup","codedeploy:DeleteDeploymentGroup","iam:passrole"],"Resource":"*"}]}'
+        - PolicyName: LambdaCloudWatchLogPolicy
+          PolicyDocument: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["logs:CreateLogGroup","logs:CreateLogStream","logs:PutLogEvents"],"Resource":"arn:aws:logs:*:*:*"}]}'
+
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+  AppTierCustomLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        S3Bucket: socialhi5-cft
+        S3Key: CodeDeploy.zip
+      FunctionName: CodeDeploy-BlueGreen-ECS
+      Description: >-
+        Custom resource provider provisioning CodeDeploy DeploymentGroup for ECS Blue/Green
+        deployments
+      Runtime: python3.7
+      Handler: lambda.lambda_handler
+      MemorySize: 128
+      Role: !GetAtt SocialHi5LambdaExecutionRole.Arn
+      Timeout: 900
+      TracingConfig:
+        Mode: PassThrough
+  AppTierDeploymentGroup:
+    DependsOn: AppTierCustomLambda
+    Type: 'Custom::DeploymentGroup'
+    Properties:
+      ServiceToken: !GetAtt AppTierCustomLambda.Arn
+      ApplicationName: !Ref AppTierDeploymentApplication
+      DeploymentGroupName: SocialHi5-AppTier-DG-CFT
+      ServiceRoleArn: arn:aws:iam::773358635836:role/Code-deploy-role
+      LoadBalancerInfo:
+        targetGroupPairInfoList:
+          - targetGroups:
+              - name: !GetAtt
+                  - ALBTGApp
+                  - TargetGroupName
+              - name: !GetAtt
+                  - ALBTGApp1
+                  - TargetGroupName
+            prodTrafficRoute:
+              listenerArns:
+                - !Ref ALBListener
+      BlueGreenDeploymentConfiguration:
+        terminateBlueInstancesOnDeploymentSuccess:
+          action: TERMINATE
+          terminationWaitTimeInMinutes: 15
+        deploymentReadyOption:
+          actionOnTimeout: STOP_DEPLOYMENT
+          waitTimeInMinutes: 20
+      EcsServices:
+        - serviceName: !GetAtt
+            - AppTierECSService
+            - Name
+          clusterName: !Ref ECSCluster
+  AppTierPipeline:
+    Type: 'AWS::CodePipeline::Pipeline'
+    Properties:
+      ArtifactStore:
+        Location: socialhi5-deploy-apptier-artifact
+        Type: S3
+      Name: SocialHi5-AppTier-Pipeline-CFT
+      RoleArn: >-
+        arn:aws:iam::773358635836:role/service-role/AWSCodePipelineServiceRole-us-west-2-socialhi5-deploy-webb
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: 1
+                Provider: CodeCommit
+              OutputArtifacts:
+                - Name: SourceArtifact
+              Configuration:
+                RepositoryName: !GetAtt AppTierRepository.Name
+                BranchName: master
+        - Name: Build
+          Actions:
+            - Name: Build
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              Region: us-west-2
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: BuildArtifact
+              Configuration:
+                ProjectName: !Ref AppTierBuild
+        - Name: Deploy
+          Actions:
+            - Name: Deploy
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CodeDeployToECS
+              Region: us-west-2
+              InputArtifacts:
+                - Name: SourceArtifact
+                - Name: BuildArtifact
+              Configuration:
+                ApplicationName: !Ref AppTierDeploymentApplication
+                DeploymentGroupName: SocialHi5-AppTier-DG-CFT
+                TaskDefinitionTemplateArtifact: SourceArtifact
+                AppSpecTemplateArtifact: SourceArtifact
+                AppSpecTemplatePath: appspec.yaml
+                TaskDefinitionTemplatePath: taskdef.json
+                Image1ArtifactName: BuildArtifact
+                Image1ContainerName: IMAGE1_NAME
